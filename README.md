@@ -67,10 +67,10 @@ non-member 403, duplicate key 409, search/filter. No coverage % claimed.
 ```powershell
 $env:JAVA_HOME = "C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot"
 $env:Path = "C:\Tools\apache-maven-3.9.9\bin;$env:JAVA_HOME\bin;" + $env:Path
-cd trinity-portfolio\taskforge
+cd taskforge   # C:\Users\Himanush Jha\taskforge
 mvn test
 $env:APP_JWT_SECRET = "<base64 32+ bytes>"; $env:DB_PASSWORD = "dev-only-password"
-docker compose up --build        # Postgres (:5433) + API (:8080 in container → :8081 host)
+docker compose up --build        # Postgres (host :5433) + API (host :8081)
 cd frontend; npm install; npm run dev   # UI on :5174
 ```
 
