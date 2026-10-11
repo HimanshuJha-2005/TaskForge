@@ -1,94 +1,99 @@
-# TaskForge — Team Issue & Project Management Platform
+# TaskForge
 
-Spring Boot + PostgreSQL backend, React frontend. Projects → members → issues
-(full lifecycle) → comments, with a Streams-powered project dashboard.
+![backend](https://github.com/HimanshuJha-2005/TaskForge/actions/workflows/backend.yml/badge.svg)
 
-> Honesty note: no benchmarks, coverage %, or deployment claims — none measured.
+Team issue and project management platform — **Spring Boot + PostgreSQL + React** — with
+membership-gated projects, an enforced issue lifecycle, comments, and a Streams-powered
+project dashboard.
+
+## Screenshots
+
+| Projects | Project dashboard | Issue detail |
+|---|---|---|
+| ![Projects](docs/screenshots/projects.png) | ![Dashboard](docs/screenshots/dashboard.png) | ![Issue](docs/screenshots/issue.png) |
 
 ## Features
 
-- Auth: register/login/me, JWT, roles ADMIN / PROJECT_MANAGER / DEVELOPER, BCrypt.
-- Projects: PM/ADMIN create (unique key), update, add members; members see own projects, ADMIN sees all.
-- Issues: member-gated CRUD, assign/unassign, priority, search + status/priority/assignee filters, pagination.
-- Lifecycle OPEN → IN_PROGRESS → IN_REVIEW → RESOLVED → CLOSED (rework loops allowed); illegal jumps → 422.
-- Comments per issue (members only).
-- Dashboard: totals + `groupingBy` status/priority/assignee + 5 recent, via Java Streams.
-- Frontend: protected routes, project list/create, project page (dashboard, filters, members), new-issue form,
-  issue detail (transition buttons, comments), loading/error/empty states, responsive CSS.
+- **Auth** — registration, login, JWT, BCrypt hashing; roles `ADMIN` / `PROJECT_MANAGER` / `DEVELOPER`
+- **Projects** — PM/admin creation with unique keys, member management; members see their projects, admins see all
+- **Membership gate** — every project-scoped request checks membership; non-members get 403
+- **Issues** — creation, assignment, priorities, full-text search with status/priority/assignee filters and pagination
+- **Issue lifecycle** — `OPEN → IN_PROGRESS → IN_REVIEW → RESOLVED → CLOSED` (with rework loops); illegal jumps rejected with 422
+- **Comments** — per-issue discussion threads for members
+- **Dashboard** — per-project totals, breakdowns by status/priority/assignee and recent issues, aggregated with the Streams API
+- **Web app (React)** — projects, project page with dashboard and filters, issue detail with one-click transitions and comments; protected routes, loading/error/empty states, responsive layout
+
+## Tech stack
+
+| Layer | Technologies |
+|---|---|
+| Backend | Java 21, Spring Boot 3.2 (Web, Security, Data JPA, Validation), JJWT |
+| Database | PostgreSQL 16, Flyway migrations, H2 for tests |
+| Frontend | React 18, React Router, Vite |
+| Build & infra | Maven, Docker Compose, GitHub Actions |
+
+## Quick start
+
+```bash
+# Backend tests (no infrastructure needed)
+mvn test
+
+# Full stack with Postgres
+export APP_JWT_SECRET=$(python3 -c "import secrets,base64;print(base64.b64encode(secrets.token_bytes(32)).decode())")
+export DB_PASSWORD=dev-password
+docker compose up --build        # API on :8081
+
+# Frontend
+cd frontend && npm install && npm run dev   # UI on :5174
+```
+
+## API reference
+
+| Method | Endpoint | Auth | Notes |
+|---|---|---|---|
+| POST | `/api/auth/register`, `/api/auth/login` | — | Returns JWT; 409 on duplicate email |
+| GET | `/api/projects` | JWT | Own projects (all for admins) |
+| POST | `/api/projects` | PM/Admin | 409 on duplicate key |
+| GET / PUT | `/api/projects/{id}` | Member | Project detail and update |
+| POST | `/api/projects/{id}/members` | PM/Admin | Add member by email |
+| GET | `/api/projects/{id}/dashboard` | Member | Aggregated stats + recent issues |
+| GET / POST | `/api/issues?projectId=…` | Member | Search, filters, pagination |
+| GET / PUT | `/api/issues/{id}` | Member | Detail and update |
+| PATCH | `/api/issues/{id}/status` | Member | 422 on illegal transition |
+| GET / POST | `/api/issues/{id}/comments` | Member | Comment thread |
+
+All errors return a uniform JSON body: `{timestamp, status, error, message, path}`.
 
 ## Architecture
 
 ```
-React (:5174 → proxy :8081) → SecurityConfig (stateless JWT) → Controllers
-  → ProjectService (membership gate) / IssueService (@Transactional) → JPA → PostgreSQL
-  → GlobalExceptionHandler → ApiError JSON
+React (Vite, :5174) ──JSON + Bearer JWT──▶ Spring Boot (:8081) ──▶ PostgreSQL (:5433 host)
+                                             │  Controller → Service (@Transactional) → Repository
+                                             │  ProjectService.requireMember gates every scoped call
+                                             └── GlobalExceptionHandler → uniform error JSON
 ```
 
-Membership (`project_members`) is the authorization gate: every project-scoped call checks it; `@PreAuthorize`
-restricts project creation to PM/ADMIN. No entities in APIs (records); no logic in controllers.
+## Project structure
 
-## Database (V1)
-
-`users` → `projects` (unique `project_key`) → `project_members` (unique pair) · `issues` (status/priority
-CHECKs, assignee + reporter FKs) → `comments`. Indexes: membership gate, member projects, issue lists,
-assignee queues, comment threads — each with its why in `V1__init.sql`.
-
-## API quick reference
-
-| Method | Path | Auth |
-|--------|------|------|
-| GET `/api/health` | no | liveness |
-| POST `/api/auth/register`, `/login` · GET `/me` | no/no/JWT | 201/200; 409 dup; 401 bad creds |
-| GET/POST `/api/projects` | JWT / PM-ADMIN | 403 otherwise; 409 dup key |
-| GET/PUT `/api/projects/{id}`, POST `/{id}/members`, GET `/{id}/dashboard` | member | 403 non-member |
-| GET/POST `/api/issues?projectId=…` | member | search/filter/page |
-| GET/PUT `/api/issues/{id}`, PATCH `/{id}/status` | member | 422 illegal transition |
-| GET/POST `/api/issues/{id}/comments` | member | 201 comment |
-
-## Decisions & tradeoffs
-
-- Membership-checked reads (not just writes): prevents cross-team snooping; costs one extra EXISTS query per call.
-- Strict linear lifecycle with rework loops (no OPEN→CLOSED skip): matches real review culture; fewer surprise states.
-- Streams dashboard in app (not SQL): clear at this scale; move to SQL aggregation when measured slow.
-- H2 tests / Postgres runtime (fast `mvn test`; Testcontainers planned).
-
-## Security
-
-Env-only secrets; BCrypt; 1h JWT; server-side role + membership checks; no sensitive logs; no stack traces.
-Gaps: no rate limiting/lockout; open role registration (local-dev convenience).
-
-## Testing — 6/6 green (`mvn test`, no infra)
-
-Full lifecycle walk (illegal 422 → OPEN…CLOSED → comment → dashboard), developer-create 403,
-non-member 403, duplicate key 409, search/filter. No coverage % claimed.
-
-## Run locally
-
-```powershell
-$env:JAVA_HOME = "C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot"
-$env:Path = "C:\Tools\apache-maven-3.9.9\bin;$env:JAVA_HOME\bin;" + $env:Path
-cd taskforge   # C:\Users\Himanush Jha\taskforge
-mvn test
-$env:APP_JWT_SECRET = "<base64 32+ bytes>"; $env:DB_PASSWORD = "dev-only-password"
-docker compose up --build        # Postgres (host :5433) + API (host :8081)
-cd frontend; npm install; npm run dev   # UI on :5174
+```
+src/main/java/com/taskforge/
+├── auth/        # users, registration, login, JWT
+├── project/     # projects, memberships
+├── issue/       # issues, lifecycle, comments
+├── common/      # global exception handling
+├── config/      # security configuration
+└── health/      # liveness probe
+src/main/resources/db/migration/   # versioned schema
+frontend/src/    # pages, auth context, API client
 ```
 
-## Deployment (documented, NOT deployed)
+## Testing
 
-Stateless container + managed Postgres. Not deployed — no claims.
+6 integration tests, run in CI on every push: full issue lifecycle (illegal transition → resolution →
+comment → dashboard), role and membership authorization, duplicate keys, search and filters.
+`mvn test` needs no external services.
 
-## Limitations → next
+## Limitations & roadmap
 
-No refresh tokens · no notifications · no issue attachments · no sprint/board view (list + filters only) ·
-Postman collection pending · Testcontainers planned.
-
-## Interview mapping (selected)
-
-| Q | A |
-|---|---|
-| How is cross-team access blocked? | `ProjectService.requireMember` + `uq_project_member`; every issue/comment path calls it |
-| Why 422 for transitions? | Valid input, illegal current-state move — `IssueTransitionException` |
-| Streams usage? | `IssueService.dashboard()` (`groupingBy` ×3, sorted limit) |
-| N+1? | Paged JPQL search fetches one page; dashboard loads one project's issues in one query |
-| Why membership table vs role-per-project? | Global roles keep the model small; per-project roles planned if needed |
+Not yet covered: refresh tokens, notifications, file attachments, board view, Testcontainers-based
+DB tests. Planned next.
