@@ -33,7 +33,7 @@ mvn test
 # Full stack
 export APP_JWT_SECRET=$(python3 -c "import secrets,base64;print(base64.b64encode(secrets.token_bytes(32)).decode())")
 export DB_PASSWORD=dev-password
-docker compose up --build          # API on :8081, Postgres on :5433
+docker compose up --build          # Backend API on :8081, PostgreSQL on :5433
 
 # Frontend (in a separate terminal)
 cd frontend && npm install && npm run dev   # UI on :5174
